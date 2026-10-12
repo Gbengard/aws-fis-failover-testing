@@ -1,0 +1,10 @@
+version: 0.2
+
+# TEMPLATE_ID, CLUSTER_NAME, SERVICE_NAME and TARGET_GROUP_ARN
+# are set as environment variables on the CodeBuild project.
+
+phases:
+  build:
+    commands:
+      - chmod +x scripts/run-fis-experiment.sh
+      - ./scripts/run-fis-experiment.sh

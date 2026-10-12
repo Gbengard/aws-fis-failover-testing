@@ -1,0 +1,6 @@
+[
+  {
+    "name": "web",
+    "imageUri": "public.ecr.aws/docker/library/nginx:latest"
+  }
+]

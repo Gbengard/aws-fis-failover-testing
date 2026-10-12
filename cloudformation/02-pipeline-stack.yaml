@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CodePipeline that deploys to the demo ECS service, then runs a CodeBuild stage
+  that starts the FIS experiment and checks that the service recovers.
+  Deploy 01-base-stack.yaml first and upload source.zip before deploying this stack.
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub fis-demo-artifacts-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: fis-demo-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: fis-demo-codebuild-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/fis-demo-failover-test*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action: ecs:DescribeServices
+                Resource: "*"
+              - Effect: Allow
+                Action: elasticloadbalancing:DescribeTargetHealth
+                Resource: "*"
+              - Effect: Allow
+                Action: fis:StartExperiment
+                Resource:
+                  - !Sub
+                    - arn:${AWS::Partition}:fis:${AWS::Region}:${AWS::AccountId}:experiment-template/${TemplateId}
+                    - TemplateId: !ImportValue fis-demo-ExperimentTemplateId
+                  - !Sub arn:${AWS::Partition}:fis:${AWS::Region}:${AWS::AccountId}:experiment/*
+              - Effect: Allow
+                Action: fis:GetExperiment
+                Resource: !Sub arn:${AWS::Partition}:fis:${AWS::Region}:${AWS::AccountId}:experiment/*
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !ImportValue fis-demo-FisRoleArn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: fis.amazonaws.com
+
+  FailoverTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: fis-demo-failover-test
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec/run-fis-experiment.yml
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: TEMPLATE_ID
+            Value: !ImportValue fis-demo-ExperimentTemplateId
+          - Name: CLUSTER_NAME
+            Value: !ImportValue fis-demo-ClusterName
+          - Name: SERVICE_NAME
+            Value: !ImportValue fis-demo-ServiceName
+          - Name: TARGET_GROUP_ARN
+            Value: !ImportValue fis-demo-TargetGroupArn
+      TimeoutInMinutes: 20
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: fis-demo-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: fis-demo-pipeline-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - s3:PutObject
+                Resource:
+                  - !Sub ${ArtifactBucket.Arn}
+                  - !Sub ${ArtifactBucket.Arn}/*
+                  - !Sub
+                    - arn:${AWS::Partition}:s3:::${Bucket}
+                    - Bucket: !ImportValue fis-demo-SourceBucketName
+                  - !Sub
+                    - arn:${AWS::Partition}:s3:::${Bucket}/*
+                    - Bucket: !ImportValue fis-demo-SourceBucketName
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt FailoverTestProject.Arn
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:DescribeTaskDefinition
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                  - ecs:RegisterTaskDefinition
+                  - ecs:UpdateService
+                Resource: "*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !ImportValue fis-demo-TaskExecutionRoleArn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: fis-demo-pipeline
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket: !ImportValue fis-demo-SourceBucketName
+                S3ObjectKey: source.zip
+                PollForSourceChanges: "true"
+              OutputArtifacts:
+                - Name: SourceOutput
+        - Name: Deploy
+          Actions:
+            - Name: DeployToEcs
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: ECS
+                Version: "1"
+              Configuration:
+                ClusterName: !ImportValue fis-demo-ClusterName
+                ServiceName: !ImportValue fis-demo-ServiceName
+                FileName: imagedefinitions.json
+              InputArtifacts:
+                - Name: SourceOutput
+        - Name: FailoverTest
+          Actions:
+            - Name: RunFisExperiment
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref FailoverTestProject
+              InputArtifacts:
+                - Name: SourceOutput
+
+Outputs:
+  PipelineName:
+    Value: !Ref Pipeline
