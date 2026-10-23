@@ -50,6 +50,19 @@ is_recovered() {
   [ "$running" = "$desired" ] && [ "$healthy" = "$desired" ]
 }
 
+case "$TARGET_GROUP_ARN" in
+  arn:*:elasticloadbalancing:*:targetgroup/*) ;;
+  *)
+    echo "TARGET_GROUP_ARN must be the full ARN of the target group, not its name. Got: ${TARGET_GROUP_ARN}" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$(desired_count)" = "None" ]; then
+  echo "ECS service ${SERVICE_NAME} was not found in cluster ${CLUSTER_NAME}. Check both names and the Region." >&2
+  exit 1
+fi
+
 echo "Step 1: check the service is healthy before the test."
 if ! is_recovered; then
   echo "The service is not healthy before the test. Stopping here." >&2

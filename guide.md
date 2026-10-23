@@ -141,15 +141,38 @@ The manual path uses the default VPC. The CloudFormation path creates its own VP
 2. Cluster name: `fis-demo-cluster`. Keep **AWS Fargate (serverless)** selected.
 3. Choose **Create**.
 
-**Step 5. Create the task definition.**
+**Step 5. Create the task execution role.**
+
+ECS uses this role to pull the image and write logs.
+
+1. Open the IAM console. Choose **Roles**, then **Create role**.
+2. Trusted entity type: **Custom trust policy**. Paste this:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "ecs-tasks.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+3. Choose **Next**. In the permissions list, search for `AmazonECSTaskExecutionRolePolicy` and select it. Choose **Next**.
+4. Role name: `fis-demo-task-execution-role`. Choose **Create role**.
+
+**Step 6. Create the task definition.**
 
 1. In the ECS console, choose **Task definitions**, then **Create new task definition**.
 2. Task definition family: `fis-demo-task`. Launch type: **AWS Fargate**. CPU: **.25 vCPU**. Memory: **.5 GB**.
-3. Task execution role: choose `ecsTaskExecutionRole`. If it is not in the list, choose **Create new role**.
+3. Task execution role: choose `fis-demo-task-execution-role`.
 4. Under **Container - 1**, set Name: `web`. Image URI: `public.ecr.aws/docker/library/nginx:latest`. Container port: `80`. Protocol: **TCP**.
 5. Choose **Create**.
 
-**Step 6. Create the service.**
+**Step 7. Create the service.**
 
 1. Open `fis-demo-cluster`. On the **Services** tab, choose **Create**.
 2. Under **Compute options**, choose **Launch type**, then **FARGATE**.
@@ -159,7 +182,7 @@ The manual path uses the default VPC. The CloudFormation path creates its own VP
 6. For the container, choose `web 80:80`. Choose **Use an existing listener** (`HTTP:80`) and **Use an existing target group** (`fis-demo-tg`).
 7. Choose **Create**.
 
-**Step 7. Check the service.**
+**Step 8. Check the service.**
 
 1. Wait until the service shows 2 running tasks.
 2. In the EC2 console, open `fis-demo-tg`. On the **Targets** tab, wait until both targets are **healthy**.
@@ -167,7 +190,7 @@ The manual path uses the default VPC. The CloudFormation path creates its own VP
 
 ### Part 2. Add the FIS experiment
 
-**Step 8. Create the CloudWatch alarm.**
+**Step 9. Create the CloudWatch alarm.**
 
 1. Open the CloudWatch console. Choose **Alarms**, then **All alarms**, then **Create alarm**.
 2. Choose **Select metric**. Choose **ApplicationELB**, then **Per AppELB, per TG Metrics**.
@@ -177,7 +200,7 @@ The manual path uses the default VPC. The CloudFormation path creates its own VP
 6. Remove any notification action. Choose **Next**.
 7. Alarm name: `fis-demo-no-healthy-hosts`. Choose **Next**, then **Create alarm**.
 
-**Step 9. Create the IAM role for FIS.**
+**Step 10. Create the IAM role for FIS.**
 
 1. Open the IAM console. Choose **Roles**, then **Create role**.
 2. Trusted entity type: **Custom trust policy**. Paste this:
@@ -224,7 +247,7 @@ The manual path uses the default VPC. The CloudFormation path creates its own VP
 
 6. Choose **Next**. Policy name: `fis-demo-stop-task`. Choose **Create policy**.
 
-**Step 10. Create the experiment template.**
+**Step 11. Create the experiment template.**
 
 1. Open the FIS console. Choose **Experiment templates**, then **Create experiment template**.
 2. Description: `Stop one running task of the demo ECS service`. Name: `fis-demo-stop-one-task`.
@@ -236,7 +259,7 @@ The manual path uses the default VPC. The CloudFormation path creates its own VP
 8. Under **Stop conditions**, select the alarm `fis-demo-no-healthy-hosts`.
 9. Choose **Create experiment template**. Type `create` when asked, then choose **Create experiment template**.
 
-**Step 11. Run the experiment by hand.**
+**Step 12. Run the experiment by hand.**
 
 1. Open the template. Choose **Start experiment**. Type `start` when asked, then choose **Start experiment**.
 2. Watch the experiment state change until it shows **Completed**.
@@ -247,14 +270,17 @@ The service recovered. Now put this check into a pipeline.
 
 ### Part 3. Add the pipeline
 
-**Step 12. Create the source bucket.**
+**Step 13. Create the buckets.**
 
 1. Open the S3 console. Choose **Create bucket**.
 2. Bucket name: `fis-demo-source-<ACCOUNT_ID>-<REGION>`.
 3. Under **Bucket Versioning**, choose **Enable**.
 4. Choose **Create bucket**.
+5. Choose **Create bucket** again. Bucket name: `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`. Leave versioning off. Choose **Create bucket**.
 
-**Step 13. Upload the source.**
+The source bucket holds `source.zip`. The pipeline keeps its working files in the artifacts bucket.
+
+**Step 14. Upload the source.**
 
 From the repo folder, run:
 
@@ -264,30 +290,56 @@ From the repo folder, run:
 
 This builds `source.zip` and uploads it. The zip has three files: `imagedefinitions.json`, `buildspec/run-fis-experiment.yml` and `scripts/run-fis-experiment.sh`.
 
-**Step 14. Create the CodeBuild project.**
+**Step 15. Create the CodeBuild role.**
 
-1. Open the CodeBuild console. Choose **Create project**.
-2. Project name: `fis-demo-failover-test`.
-3. Source provider: **AWS CodePipeline**.
-4. Environment: **Managed image**. Use the latest Standard image that the console offers for Ubuntu.
-5. Service role: **New service role**. Role name: `fis-demo-codebuild-role`.
-6. Under **Buildspec**, choose **Use a buildspec file**. Buildspec name: `buildspec/run-fis-experiment.yml`.
-7. Under **Additional configuration**, add four environment variables (type **Plaintext**):
-   - `TEMPLATE_ID`: the experiment template ID from the FIS console.
-   - `CLUSTER_NAME`: `fis-demo-cluster`
-   - `SERVICE_NAME`: `fis-demo-service`
-   - `TARGET_GROUP_ARN`: the ARN of `fis-demo-tg`.
-8. Choose **Create build project**.
-
-**Step 15. Give CodeBuild permission to run FIS.**
-
-1. In the IAM console, open `fis-demo-codebuild-role`. Choose **Add permissions**, then **Create inline policy**, then the **JSON** tab.
-2. Paste this. Replace the placeholders.
+1. Open the IAM console. Choose **Roles**, then **Create role**.
+2. Trusted entity type: **Custom trust policy**. Paste this:
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "codebuild.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+3. Choose **Next**. Do not attach any policy. Choose **Next**.
+4. Role name: `fis-demo-codebuild-role`. Choose **Create role**.
+5. Open the role. Choose **Add permissions**, then **Create inline policy**. Choose the **JSON** tab and paste this. Replace `<ACCOUNT_ID>`, `<REGION>` and `<TEMPLATE_ID>`. You get the template ID from the FIS console, on the experiment template page.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:<REGION>:<ACCOUNT_ID>:log-group:/aws/codebuild/fis-demo-failover-test*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::fis-demo-artifacts-<ACCOUNT_ID>-<REGION>/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ecs:DescribeServices",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "elasticloadbalancing:DescribeTargetHealth",
+      "Resource": "*"
+    },
     {
       "Effect": "Allow",
       "Action": "fis:StartExperiment",
@@ -308,38 +360,146 @@ This builds `source.zip` and uploads it. The zip has three files: `imagedefiniti
       "Condition": {
         "StringEquals": { "iam:PassedToService": "fis.amazonaws.com" }
       }
-    },
-    {
-      "Effect": "Allow",
-      "Action": "ecs:DescribeServices",
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": "elasticloadbalancing:DescribeTargetHealth",
-      "Resource": "*"
     }
   ]
 }
 ```
 
-3. Choose **Next**. Policy name: `fis-demo-fis-access`. Choose **Create policy**.
+6. Choose **Next**. Policy name: `fis-demo-codebuild-policy`. Choose **Create policy**.
 
-**Step 16. Create the pipeline.**
+**Step 16. Create the pipeline role.**
+
+1. Open the IAM console. Choose **Roles**, then **Create role**.
+2. Trusted entity type: **Custom trust policy**. Paste this:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "codepipeline.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+3. Choose **Next**. Do not attach any policy. Choose **Next**.
+4. Role name: `fis-demo-pipeline-role`. Choose **Create role**.
+5. Open the role. Choose **Add permissions**, then **Create inline policy**. Choose the **JSON** tab and paste this. Replace `<ACCOUNT_ID>` and `<REGION>`.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::fis-demo-source-<ACCOUNT_ID>-<REGION>",
+        "arn:aws:s3:::fis-demo-source-<ACCOUNT_ID>-<REGION>/*",
+        "arn:aws:s3:::fis-demo-artifacts-<ACCOUNT_ID>-<REGION>",
+        "arn:aws:s3:::fis-demo-artifacts-<ACCOUNT_ID>-<REGION>/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["codebuild:StartBuild", "codebuild:BatchGetBuilds"],
+      "Resource": "arn:aws:codebuild:<REGION>:<ACCOUNT_ID>:project/fis-demo-failover-test"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeServices",
+        "ecs:DescribeTaskDefinition",
+        "ecs:DescribeTasks",
+        "ecs:ListTasks",
+        "ecs:RegisterTaskDefinition",
+        "ecs:UpdateService"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/fis-demo-task-execution-role",
+      "Condition": {
+        "StringEquals": { "iam:PassedToService": "ecs-tasks.amazonaws.com" }
+      }
+    }
+  ]
+}
+```
+
+6. Choose **Next**. Policy name: `fis-demo-pipeline-policy`. Choose **Create policy**.
+
+**Step 17. Create the CodeBuild project.**
+
+1. Open the CodeBuild console. Choose **Create project**.
+2. Project name: `fis-demo-failover-test`.
+3. Under **Source**, set Source provider to **Amazon S3**. The console does not list CodePipeline here. Set Bucket to `fis-demo-source-<ACCOUNT_ID>-<REGION>` and S3 object key to `source.zip`. When you add this project to the pipeline in Step 18, CodePipeline changes the project's source to CodePipeline for you.
+4. Environment: **Managed image**. Use the latest Standard image that the console offers for Ubuntu.
+5. Service role: **Existing service role**. Select `fis-demo-codebuild-role`.
+6. Under **Buildspec**, choose **Use a buildspec file**. Buildspec name: `buildspec/run-fis-experiment.yml`.
+7. Under **Additional configuration**, add four environment variables (type **Plaintext**):
+   - `TEMPLATE_ID`: the experiment template ID from the FIS console.
+   - `CLUSTER_NAME`: `fis-demo-cluster`
+   - `SERVICE_NAME`: `fis-demo-service`
+   - `TARGET_GROUP_ARN`: the full ARN of `fis-demo-tg`. Copy it from the target group's details page in the EC2 console. It starts with `arn:aws:elasticloadbalancing`. Do not use the name.
+8. Choose **Create build project**.
+
+**Step 18. Create the pipeline.**
 
 1. Open the CodePipeline console. Choose **Create pipeline**. Choose the option to build a custom pipeline, then **Next**.
-2. Pipeline name: `fis-demo-pipeline`. Service role: **New service role**. Choose **Next**.
-3. Source provider: **Amazon S3**. Bucket: your source bucket. S3 object key: `source.zip`. Output artifact format: **CodePipeline default**. Choose **Next**.
-4. Skip the build stage. Choose **Skip build stage**.
-5. Deploy provider: **Amazon ECS**. Cluster name: `fis-demo-cluster`. Service name: `fis-demo-service`. Image definitions file: `imagedefinitions.json`. Choose **Next**, then **Create pipeline**.
-6. The new service role needs ECS and PassRole permissions. If the Deploy stage fails with access denied, add the permissions shown in `cloudformation/02-pipeline-stack.yaml` to the pipeline role.
+2. Pipeline name: `fis-demo-pipeline`. Service role: **Existing service role**. Select `fis-demo-pipeline-role`.
+3. Under **Advanced settings**, set the artifact store to **Custom location** and select `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`. Choose **Next**.
+4. Source provider: **Amazon S3**. Bucket: your source bucket. S3 object key: `source.zip`. Output artifact format: **CodePipeline default**. Choose **Next**.
+5. Skip the build stage. Choose **Skip build stage**.
+6. Deploy provider: **Amazon ECS**. Cluster name: `fis-demo-cluster`. Service name: `fis-demo-service`. Image definitions file: `imagedefinitions.json`. Choose **Next**, then **Create pipeline**.
 7. Choose **Edit**. After the Deploy stage, choose **Add stage**. Stage name: `FailoverTest`. Choose **Add action group**.
 8. Action name: `RunFisExperiment`. Action provider: **AWS CodeBuild**. Input artifacts: `SourceArtifact`. Project name: `fis-demo-failover-test`. Choose **Done**, then **Save**.
 
-**Step 17. Run it.**
+**Step 19. Run it.**
 
 1. Choose **Release change** on the pipeline.
-2. Watch the three stages. When FailoverTest succeeds, open the build logs. You should see the line `The service recovered. Test passed.`
+2. Watch the three stages. When FailoverTest succeeds, open the build logs. A passing run looks like this:
+
+```text
+Step 1: check the service is healthy before the test.
+desired=2 running=2 healthy_targets=2
+Step 2: start the experiment from template EXT2BR9MPSB8Hdix.
+Experiment ID: EXPKoHXWhUDcXadYBt
+Step 3: wait for the experiment to end.
+experiment status: initiating
+experiment status: running
+experiment status: completed
+Step 4: wait for the service to recover.
+desired=2 running=1 healthy_targets=2
+desired=2 running=1 healthy_targets=2
+desired=2 running=1 healthy_targets=2
+desired=2 running=1 healthy_targets=1
+desired=2 running=1 healthy_targets=1
+desired=2 running=2 healthy_targets=2
+The service recovered. Test passed.
+```
+
+How to read it:
+
+- Step 1 shows a healthy service: 2 tasks running and 2 healthy targets.
+- In Step 3, FIS stops one task. The experiment goes from `initiating` to `running` to `completed`.
+- In Step 4, the running count drops to 1 while ECS starts a replacement.
+- The healthy target count can lag behind the running count. In this run it stayed at 2 for a few checks, then dropped to 1. That is why the script checks both numbers and not only the healthy targets.
+- When both numbers are back at 2, the test passes.
+
+In this run, the whole stage took about 100 seconds. Your IDs and timing will differ.
 
 ## Teardown for the manual approach
 
@@ -351,8 +511,8 @@ Delete in this order:
 4. EC2: delete the load balancer `fis-demo-alb`, then the target group `fis-demo-tg`, then the security groups `fis-demo-task-sg` and `fis-demo-alb-sg`.
 5. FIS: delete the experiment template `fis-demo-stop-one-task`.
 6. CloudWatch: delete the alarm `fis-demo-no-healthy-hosts`.
-7. IAM: delete `fis-demo-experiment-role`, `fis-demo-codebuild-role`, and the roles that the pipeline and the console created.
-8. S3: empty and delete the source bucket and the pipeline artifact bucket. The source bucket is versioned, so use `./tools/empty-bucket.sh <bucket-name>` first.
+7. IAM: delete the four roles `fis-demo-experiment-role`, `fis-demo-codebuild-role`, `fis-demo-pipeline-role` and `fis-demo-task-execution-role`.
+8. S3: empty and delete the source bucket and the artifacts bucket (`fis-demo-source-<ACCOUNT_ID>-<REGION>` and `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`). The source bucket is versioned, so use `./tools/empty-bucket.sh <bucket-name>` first.
 9. ECS: deregister the task definition `fis-demo-task`.
 
 Do this before you start the automated approach. Both approaches use the same resource names, so leftover resources will cause name conflicts.
@@ -404,7 +564,36 @@ The pipeline starts by itself. In the CodePipeline console, open `fis-demo-pipel
 
 **Step 4. See what the test does.**
 
-In the CodeBuild log, find these lines in order: the health check before the test, the experiment ID, the experiment status changing to `completed`, and the `desired`, `running` and `healthy_targets` numbers rising back to match.
+Open the CodeBuild log of the FailoverTest stage. A passing run looks like this:
+
+```text
+Step 1: check the service is healthy before the test.
+desired=2 running=2 healthy_targets=2
+Step 2: start the experiment from template EXT2BR9MPSB8Hdix.
+Experiment ID: EXPKoHXWhUDcXadYBt
+Step 3: wait for the experiment to end.
+experiment status: initiating
+experiment status: running
+experiment status: completed
+Step 4: wait for the service to recover.
+desired=2 running=1 healthy_targets=2
+desired=2 running=1 healthy_targets=2
+desired=2 running=1 healthy_targets=2
+desired=2 running=1 healthy_targets=1
+desired=2 running=1 healthy_targets=1
+desired=2 running=2 healthy_targets=2
+The service recovered. Test passed.
+```
+
+How to read it:
+
+- Step 1 shows a healthy service: 2 tasks running and 2 healthy targets.
+- In Step 3, FIS stops one task. The experiment goes from `initiating` to `running` to `completed`.
+- In Step 4, the running count drops to 1 while ECS starts a replacement.
+- The healthy target count can lag behind the running count. In this run it stayed at 2 for a few checks, then dropped to 1. That is why the script checks both numbers and not only the healthy targets.
+- When both numbers are back at 2, the test passes.
+
+In this run, the whole stage took about 100 seconds. Your IDs and timing will differ.
 
 To change how long the test waits for recovery, set the environment variable `RECOVERY_TIMEOUT` (in seconds) on the CodeBuild project. The default is 300. This is your real pass or fail line.
 
@@ -438,6 +627,12 @@ The pipeline reads `source.zip` from the source bucket. Check that the file is t
 
 **FailoverTest fails with "The service is not healthy before the test."**
 The script checks the service before it breaks anything. Wait until the Deploy stage has finished and both targets are healthy, then run the stage again.
+
+**FailoverTest fails with "is not a valid target group ARN".**
+The `TARGET_GROUP_ARN` variable holds the target group name, not its ARN. Edit the CodeBuild project, open **Additional configuration**, and paste the full ARN. The script now checks this at the start and tells you.
+
+**FailoverTest shows `desired=None running=None`.**
+ECS did not find the service. Check that `CLUSTER_NAME` is `fis-demo-cluster`, that `SERVICE_NAME` is `fis-demo-service`, and that the CodeBuild project is in the same Region as the service. To test from your computer, run `aws ecs describe-services --cluster fis-demo-cluster --services fis-demo-service --query "services[0].[runningCount,desiredCount]"`. The script now stops with a clear message in this case.
 
 **FailoverTest fails with "did not recover".**
 Recovery took longer than `RECOVERY_TIMEOUT`. Open the ECS service events and the target group health to see why. Raise the timeout only if the longer time is acceptable for your service.
