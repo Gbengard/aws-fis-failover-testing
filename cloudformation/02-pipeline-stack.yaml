@@ -65,6 +65,12 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: fis.amazonaws.com
+              - Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    iam:AWSServiceName: fis.amazonaws.com
 
   FailoverTestProject:
     Type: AWS::CodeBuild::Project

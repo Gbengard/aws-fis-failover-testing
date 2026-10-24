@@ -30,7 +30,7 @@ aws cloudformation deploy --template-file cloudformation/01-base-stack.yaml \
 
 BUCKET=$(aws cloudformation describe-stacks --stack-name fis-demo-base \
   --query "Stacks[0].Outputs[?OutputKey=='SourceBucketName'].OutputValue" --output text)
-./tools/package-source.sh "$BUCKET"
+bash tools/package-source.sh "$BUCKET"
 
 aws cloudformation deploy --template-file cloudformation/02-pipeline-stack.yaml \
   --stack-name fis-demo-pipeline --capabilities CAPABILITY_NAMED_IAM

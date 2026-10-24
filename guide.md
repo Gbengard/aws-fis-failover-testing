@@ -285,7 +285,7 @@ The source bucket holds `source.zip`. The pipeline keeps its working files in th
 From the repo folder, run:
 
 ```bash
-./tools/package-source.sh fis-demo-source-<ACCOUNT_ID>-<REGION>
+bash tools/package-source.sh fis-demo-source-<ACCOUNT_ID>-<REGION>
 ```
 
 This builds `source.zip` and uploads it. The zip has three files: `imagedefinitions.json`, `buildspec/run-fis-experiment.yml` and `scripts/run-fis-experiment.sh`.
@@ -359,6 +359,14 @@ This builds `source.zip` and uploads it. The zip has three files: `imagedefiniti
       "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/fis-demo-experiment-role",
       "Condition": {
         "StringEquals": { "iam:PassedToService": "fis.amazonaws.com" }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "*",
+      "Condition": {
+        "StringLike": { "iam:AWSServiceName": "fis.amazonaws.com" }
       }
     }
   ]
@@ -512,7 +520,7 @@ Delete in this order:
 5. FIS: delete the experiment template `fis-demo-stop-one-task`.
 6. CloudWatch: delete the alarm `fis-demo-no-healthy-hosts`.
 7. IAM: delete the four roles `fis-demo-experiment-role`, `fis-demo-codebuild-role`, `fis-demo-pipeline-role` and `fis-demo-task-execution-role`.
-8. S3: empty and delete the source bucket and the artifacts bucket (`fis-demo-source-<ACCOUNT_ID>-<REGION>` and `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`). The source bucket is versioned, so use `./tools/empty-bucket.sh <bucket-name>` first.
+8. S3: empty and delete the source bucket and the artifacts bucket (`fis-demo-source-<ACCOUNT_ID>-<REGION>` and `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`). The source bucket is versioned, so use `bash tools/empty-bucket.sh <bucket-name>` first.
 9. ECS: deregister the task definition `fis-demo-task`.
 
 Do this before you start the automated approach. Both approaches use the same resource names, so leftover resources will cause name conflicts.
@@ -548,7 +556,7 @@ Open `AlbUrl` in your browser. You should see the nginx welcome page.
 ```bash
 BUCKET=$(aws cloudformation describe-stacks --stack-name fis-demo-base \
   --query "Stacks[0].Outputs[?OutputKey=='SourceBucketName'].OutputValue" --output text)
-./tools/package-source.sh "$BUCKET"
+bash tools/package-source.sh "$BUCKET"
 ```
 
 **Step 3. Deploy the pipeline stack.**
@@ -605,14 +613,15 @@ Delete the pipeline stack first. The base stack exports values that it uses.
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGION=$(aws configure get region)
 
-aws s3 rm "s3://fis-demo-artifacts-${ACCOUNT}-${REGION}" --recursive
-aws cloudformation delete-stack --stack-name fis-demo-pipeline
-aws cloudformation wait stack-delete-complete --stack-name fis-demo-pipeline
-
-./tools/empty-bucket.sh "fis-demo-source-${ACCOUNT}-${REGION}"
-aws cloudformation delete-stack --stack-name fis-demo-base
+aws s3 rm "s3://fis-demo-artifacts-${ACCOUNT}-${REGION}" --recursive &&
+aws cloudformation delete-stack --stack-name fis-demo-pipeline &&
+aws cloudformation wait stack-delete-complete --stack-name fis-demo-pipeline &&
+bash tools/empty-bucket.sh "fis-demo-source-${ACCOUNT}-${REGION}" &&
+aws cloudformation delete-stack --stack-name fis-demo-base &&
 aws cloudformation wait stack-delete-complete --stack-name fis-demo-base
 ```
+
+The `&&` at the end of each line stops the chain at the first failure. That way the base stack is not deleted while its source bucket still has files in it.
 
 ## Troubleshooting
 
@@ -634,11 +643,14 @@ The `TARGET_GROUP_ARN` variable holds the target group name, not its ARN. Edit t
 **FailoverTest shows `desired=None running=None`.**
 ECS did not find the service. Check that `CLUSTER_NAME` is `fis-demo-cluster`, that `SERVICE_NAME` is `fis-demo-service`, and that the CodeBuild project is in the same Region as the service. To test from your computer, run `aws ecs describe-services --cluster fis-demo-cluster --services fis-demo-service --query "services[0].[runningCount,desiredCount]"`. The script now stops with a clear message in this case.
 
+**FailoverTest fails with "not authorized to perform: iam:CreateServiceLinkedRole".**
+FIS uses a service-linked role named `AWSServiceRoleForFIS`. If it does not exist in the account, FIS creates it when the first experiment starts, and the identity that starts the experiment needs permission to do that. Here, that identity is the CodeBuild role. Add `iam:CreateServiceLinkedRole` to the CodeBuild role, with the condition `iam:AWSServiceName` set to `fis.amazonaws.com`. The policy in this guide includes it. The error can also appear on a later run if someone deleted the service-linked role in between, for example during cleanup.
+
 **FailoverTest fails with "did not recover".**
 Recovery took longer than `RECOVERY_TIMEOUT`. Open the ECS service events and the target group health to see why. Raise the timeout only if the longer time is acceptable for your service.
 
 **The stack delete fails with "bucket is not empty".**
-Run `./tools/empty-bucket.sh <bucket-name>` for the source bucket, or `aws s3 rm --recursive` for the artifact bucket, and delete again.
+Run `bash tools/empty-bucket.sh <bucket-name>` for the source bucket, or `aws s3 rm --recursive` for the artifact bucket, and delete again.
 
 **The base stack delete fails because an export is in use.**
 Delete the `fis-demo-pipeline` stack first.
