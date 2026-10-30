@@ -18,6 +18,7 @@ pipeline-source/              the files that go inside source.zip
 tools/                        helper scripts you run on your computer
   package-source.sh           builds source.zip and uploads it
   empty-bucket.sh             empties a versioned bucket before teardown
+  cleanup-leftovers.sh        removes task definition revisions and log groups after teardown
 architecture/
   architecture.drawio         architecture diagram (open in draw.io)
 ```

@@ -62,6 +62,11 @@ You could stop a task with `aws ecs stop-task` and get the same failure. FIS add
 
 The script gets the template ID, cluster name, service name and target group ARN from environment variables on the CodeBuild project.
 
+**Why S3 is used.** The project uses two S3 buckets, for two different jobs.
+
+- The source bucket holds `source.zip`. A pipeline needs a place to read its source from. S3 keeps the demo simple, because it needs no GitHub connection and no extra setup step. CodePipeline reads the source as one zip file, and the bucket must have versioning turned on. A new upload of `source.zip` creates a new version and starts a pipeline run. In a real project, you would replace this with a Git repository.
+- The artifacts bucket belongs to the pipeline. CodePipeline uses it to pass files from one stage to the next. It is a separate bucket from the source bucket, and every pipeline needs one.
+
 **When it runs.** The test runs on every pipeline run, after the Deploy stage succeeds. If Deploy fails, the test does not run. In this demo, a new `source.zip` in the S3 bucket starts the pipeline. In real use, point the test at a staging environment first. Stopping a task in production on every release is a decision your team should make on purpose.
 
 ## Before you start
@@ -101,6 +106,23 @@ Get the code:
 git clone https://github.com/Gbengard/aws-fis-failover-testing.git
 cd aws-fis-failover-testing
 ```
+
+## Where to watch what happens
+
+Open these pages in separate tabs before you start the test. Refresh them as the pipeline runs.
+
+| What you want to see | Where to look | What you should see |
+|---|---|---|
+| Pipeline progress | CodePipeline console, `fis-demo-pipeline` | The three stages turn green one after another. |
+| The test output | CodeBuild console, `fis-demo-failover-test`, then the latest build and its logs | The log lines shown in the guide. |
+| The experiment | FIS console, **Experiments** | A new experiment. Its state goes from initiating to running to completed. |
+| The task being stopped | ECS console, `fis-demo-cluster`, `fis-demo-service`, **Tasks** tab. Use the filter to show stopped tasks too. | One task stopped and a new one starting. |
+| What ECS did about it | The service events in the same service page | Messages about stopping and starting tasks. |
+| Target health | EC2 console, **Target Groups**, `fis-demo-tg`, **Targets** tab | One IP address goes unhealthy or draining. A new IP appears and turns healthy. |
+| The stop condition | CloudWatch console, **Alarms**, `fis-demo-no-healthy-hosts` | The state stays `OK`. If it goes to `In alarm`, no healthy target was left. |
+| The new release | ECS console, the service page, **Deployments** | A new task definition revision for the latest deploy. |
+| Container logs | CloudWatch console, **Log groups**, `/ecs/fis-demo` (automated path) | nginx log lines from the running tasks. |
+| The app itself | The ALB URL in your browser | The nginx page keeps answering, because one task stays up. |
 
 ## Manual approach in the AWS console
 
@@ -521,7 +543,10 @@ Delete in this order:
 6. CloudWatch: delete the alarm `fis-demo-no-healthy-hosts`.
 7. IAM: delete the four roles `fis-demo-experiment-role`, `fis-demo-codebuild-role`, `fis-demo-pipeline-role` and `fis-demo-task-execution-role`.
 8. S3: empty and delete the source bucket and the artifacts bucket (`fis-demo-source-<ACCOUNT_ID>-<REGION>` and `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`). The source bucket is versioned, so use `bash tools/empty-bucket.sh <bucket-name>` first.
-9. ECS: deregister the task definition `fis-demo-task`.
+9. ECS: open **Task definitions** and choose `fis-demo-task`. Select all revisions and deregister them. Then select all revisions again and delete them. Do this after the service is deleted. A deleted revision stays in `DELETE_IN_PROGRESS` until every task and service that uses it has ended. The pipeline's Deploy stage registers new revisions, so there can be more than one.
+10. CloudWatch: open **Log groups** and delete `/aws/codebuild/fis-demo-failover-test`. CodeBuild creates it by itself on the first run. Also delete the log group that ECS created for the task, which should be `/ecs/fis-demo-task`. Check the real name in the list.
+
+To do steps 9 and 10 from the command line, run `bash tools/cleanup-leftovers.sh`. It handles the known names above.
 
 Do this before you start the automated approach. Both approaches use the same resource names, so leftover resources will cause name conflicts.
 
@@ -618,10 +643,13 @@ aws cloudformation delete-stack --stack-name fis-demo-pipeline &&
 aws cloudformation wait stack-delete-complete --stack-name fis-demo-pipeline &&
 bash tools/empty-bucket.sh "fis-demo-source-${ACCOUNT}-${REGION}" &&
 aws cloudformation delete-stack --stack-name fis-demo-base &&
-aws cloudformation wait stack-delete-complete --stack-name fis-demo-base
+aws cloudformation wait stack-delete-complete --stack-name fis-demo-base &&
+bash tools/cleanup-leftovers.sh
 ```
 
 The `&&` at the end of each line stops the chain at the first failure. That way the base stack is not deleted while its source bucket still has files in it.
+
+The last line cleans up what the stacks do not own. The Deploy stage registers new task definition revisions on its own, and CodeBuild creates its own log group on the first run. Neither belongs to a stack, so deleting the stacks leaves them behind. The script deregisters and deletes every revision of `fis-demo-task` and deletes the log groups. It runs last because a revision cannot finish deleting while a service still uses it.
 
 ## Troubleshooting
 
