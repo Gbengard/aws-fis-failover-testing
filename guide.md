@@ -136,25 +136,28 @@ The manual path uses the default VPC. The CloudFormation path creates its own VP
 2. Security group name: `fis-demo-alb-sg`. Description: `ALB for the FIS demo`. VPC: the default VPC.
 3. Under **Inbound rules**, choose **Add rule**. Type: **HTTP**. Source: **Anywhere-IPv4**.
 4. Choose **Create security group**.
+![ALB Security Group](images/fis-demo-alb-sg.png)
 5. Choose **Create security group** again. Name: `fis-demo-task-sg`. Description: `Tasks for the FIS demo`. VPC: the default VPC.
 6. Under **Inbound rules**, choose **Add rule**. Type: **HTTP**. Source: **Custom**, then pick `fis-demo-alb-sg`.
 7. Choose **Create security group**.
+![Task for FIS](images/fis-demo-task-sg.png)
 
 **Step 2. Create the target group.**
 
 1. In the EC2 console, choose **Target Groups**, then **Create target group**.
 2. Target type: **IP addresses**. Target group name: `fis-demo-tg`. Protocol: **HTTP**. Port: `80`. VPC: the default VPC.
 3. Under **Health checks**, keep the path as `/`.
-4. Choose **Next**. Do not register any targets. Choose **Create target group**.
+4. Choose **Next**.  Do not register any targets. Choose **Next**. Choose **Create target group**.
 
 **Step 3. Create the load balancer.**
 
 1. In the EC2 console, choose **Load Balancers**, then **Create load balancer**.
 2. Under **Application Load Balancer**, choose **Create**.
 3. Load balancer name: `fis-demo-alb`. Scheme: **Internet-facing**. VPC: the default VPC.
-4. Under **Mappings**, select at least two Availability Zones.
+4. Under **Network Mappings**, select at least two Availability Zones.
 5. Under **Security groups**, remove the default group and select `fis-demo-alb-sg`.
 6. Under **Listeners and routing**, keep **HTTP** and port `80`. For **Default action**, select `fis-demo-tg`.
+![load balancer](images/fis-demo-alb.png)
 7. Choose **Create load balancer**.
 
 **Step 4. Create the cluster.**
@@ -186,6 +189,8 @@ ECS uses this role to pull the image and write logs.
 3. Choose **Next**. In the permissions list, search for `AmazonECSTaskExecutionRolePolicy` and select it. Choose **Next**.
 4. Role name: `fis-demo-task-execution-role`. Choose **Create role**.
 
+![fis demo task execution role](images/fis-demo-task-execution-role.png)
+
 **Step 6. Create the task definition.**
 
 1. In the ECS console, choose **Task definitions**, then **Create new task definition**.
@@ -197,29 +202,34 @@ ECS uses this role to pull the image and write logs.
 **Step 7. Create the service.**
 
 1. Open `fis-demo-cluster`. On the **Services** tab, choose **Create**.
-2. Under **Compute options**, choose **Launch type**, then **FARGATE**.
-3. Under **Deployment configuration**, set Family: `fis-demo-task` (latest revision). Service name: `fis-demo-service`. Desired tasks: `2`.
-4. Under **Networking**, keep the default VPC and subnets. Remove the default security group and select `fis-demo-task-sg`. Turn **Public IP** on.
-5. Under **Load balancing**, choose **Application Load Balancer**. Choose **Use an existing load balancer** and select `fis-demo-alb`.
+2. Set Family: `fis-demo-task` (latest revision). Service name: `fis-demo-service`.
+3. Under **Compute options**, choose **Launch type**, then **FARGATE**.
+4. Under **Deployment configuration**, set Desired tasks: `2`.
+5. Under **Networking**, keep the default VPC and subnets. Remove the default security group and select `fis-demo-task-sg`. Turn **Public IP** on.
+6. Under **Load balancing**, check **use load balancing**, choose **Application Load Balancer**. Choose **Use an existing load balancer** and select `fis-demo-alb`.
 6. For the container, choose `web 80:80`. Choose **Use an existing listener** (`HTTP:80`) and **Use an existing target group** (`fis-demo-tg`).
 7. Choose **Create**.
 
 **Step 8. Check the service.**
 
 1. Wait until the service shows 2 running tasks.
+![Services running](images/services.png)
 2. In the EC2 console, open `fis-demo-tg`. On the **Targets** tab, wait until both targets are **healthy**.
-3. Open the ALB DNS name in your browser. You should see the nginx welcome page.
+![healthy targets](images/targets.png)
+3. Open the ALB DNS name in your browser, make sure you open with http. You should see the nginx welcome page.
+![nginx welcome page](images/alb-url.png)
 
 ### Part 2. Add the FIS experiment
 
 **Step 9. Create the CloudWatch alarm.**
 
-1. Open the CloudWatch console. Choose **Alarms**, then **All alarms**, then **Create alarm**.
+1. Open the CloudWatch console. Choose **Alarms**, then **Create alarm**.
 2. Choose **Select metric**. Choose **ApplicationELB**, then **Per AppELB, per TG Metrics**.
 3. Select **HealthyHostCount** for `fis-demo-tg`. Choose **Select metric**.
 4. Statistic: **Minimum**. Period: **1 minute**.
 5. Conditions: **Static**, **Lower**, than `1`. Choose **Next**.
-6. Remove any notification action. Choose **Next**.
+6. Remove any notification action. Choose **Next**, click on the prompt message **proceed without actions**.
+![Cloud watch alarm preview](images/alarm.png)
 7. Alarm name: `fis-demo-no-healthy-hosts`. Choose **Next**, then **Create alarm**.
 
 **Step 10. Create the IAM role for FIS.**
@@ -274,18 +284,23 @@ ECS uses this role to pull the image and write logs.
 1. Open the FIS console. Choose **Experiment templates**, then **Create experiment template**.
 2. Description: `Stop one running task of the demo ECS service`. Name: `fis-demo-stop-one-task`.
 3. Under **Actions**, choose **Add action**. Name: `StopOneTask`. Action type: `aws:ecs:stop-task`. Choose **Save**.
+![stop one task](images/stoponetask.png)
 4. Under **Targets**, edit the target that FIS created for the action. Name: `OneTask`. Resource type: `aws:ecs:task`.
 5. Set the target to use resource parameters: `cluster` = `fis-demo-cluster` and `service` = `fis-demo-service`.
 6. Selection mode: **Count**. Number of resources: `1`. Choose **Save**.
-7. Under **Service access**, choose **Use an existing IAM role** and select `fis-demo-experiment-role`.
-8. Under **Stop conditions**, select the alarm `fis-demo-no-healthy-hosts`.
-9. Choose **Create experiment template**. Type `create` when asked, then choose **Create experiment template**.
+![One task](images/onetask.png)
+7. Click on **next**. Under **Service access**, choose **Use an existing IAM role** and select `fis-demo-experiment-role` and click **next**.
+8. Under **Stop conditions**, select the alarm `fis-demo-no-healthy-hosts`and click **next**.
+9. Choose **Create experiment template**.
+![FIS experiment template](images/template.png)
 
 **Step 12. Run the experiment by hand.**
 
 1. Open the template. Choose **Start experiment**. Type `start` when asked, then choose **Start experiment**.
 2. Watch the experiment state change until it shows **Completed**.
+![FIS experiment completed](images/fis-completed.png)
 3. In the ECS console, open `fis-demo-service`. On the **Tasks** tab, you see one task stopped and a new task starting.
+![task running](images/task-stopped.png)
 4. In the target group, wait until both targets are **healthy** again.
 
 The service recovered. Now put this check into a pipeline.
@@ -492,7 +507,7 @@ This builds `source.zip` and uploads it. The zip has three files: `imagedefiniti
 2. Pipeline name: `fis-demo-pipeline`. Service role: **Existing service role**. Select `fis-demo-pipeline-role`.
 3. Under **Advanced settings**, set the artifact store to **Custom location** and select `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`. Choose **Next**.
 4. Source provider: **Amazon S3**. Bucket: your source bucket. S3 object key: `source.zip`. Output artifact format: **CodePipeline default**. Choose **Next**.
-5. Skip the build stage. Choose **Skip build stage**.
+5. Skip the build stage. Choose **Skip build stage** and Choose **Skip test stage**.
 6. Deploy provider: **Amazon ECS**. Cluster name: `fis-demo-cluster`. Service name: `fis-demo-service`. Image definitions file: `imagedefinitions.json`. Choose **Next**, then **Create pipeline**.
 7. Choose **Edit**. After the Deploy stage, choose **Add stage**. Stage name: `FailoverTest`. Choose **Add action group**.
 8. Action name: `RunFisExperiment`. Action provider: **AWS CodeBuild**. Input artifacts: `SourceArtifact`. Project name: `fis-demo-failover-test`. Choose **Done**, then **Save**.
@@ -500,6 +515,9 @@ This builds `source.zip` and uploads it. The zip has three files: `imagedefiniti
 **Step 19. Run it.**
 
 1. Choose **Release change** on the pipeline.
+![codepipeline running](images/codepipeline.png)
+![ecs deployment](images/ecs-deployment.png)
+![ecs tasks](images/ecs-tasks.png)
 2. Watch the three stages. When FailoverTest succeeds, open the build logs. A passing run looks like this:
 
 ```text
@@ -538,13 +556,13 @@ Delete in this order:
 1. CodePipeline: choose `fis-demo-pipeline`, then **Delete pipeline**.
 2. CodeBuild: choose `fis-demo-failover-test`, then **Delete build project**.
 3. ECS: open `fis-demo-cluster`, choose `fis-demo-service`, then **Delete service**. Turn on **Force delete** if asked. Then choose **Delete cluster**.
-4. EC2: delete the load balancer `fis-demo-alb`, then the target group `fis-demo-tg`, then the security groups `fis-demo-task-sg` and `fis-demo-alb-sg`.
-5. FIS: delete the experiment template `fis-demo-stop-one-task`.
-6. CloudWatch: delete the alarm `fis-demo-no-healthy-hosts`.
-7. IAM: delete the four roles `fis-demo-experiment-role`, `fis-demo-codebuild-role`, `fis-demo-pipeline-role` and `fis-demo-task-execution-role`.
-8. S3: empty and delete the source bucket and the artifacts bucket (`fis-demo-source-<ACCOUNT_ID>-<REGION>` and `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`). The source bucket is versioned, so use `bash tools/empty-bucket.sh <bucket-name>` first.
-9. ECS: open **Task definitions** and choose `fis-demo-task`. Select all revisions and deregister them. Then select all revisions again and delete them. Do this after the service is deleted. A deleted revision stays in `DELETE_IN_PROGRESS` until every task and service that uses it has ended. The pipeline's Deploy stage registers new revisions, so there can be more than one.
-10. CloudWatch: open **Log groups** and delete `/aws/codebuild/fis-demo-failover-test`. CodeBuild creates it by itself on the first run. Also delete the log group that ECS created for the task, which should be `/ecs/fis-demo-task`. Check the real name in the list.
+4. FIS: delete the experiment template `fis-demo-stop-one-task`.
+5. CloudWatch: delete the alarm `fis-demo-no-healthy-hosts`.
+6. IAM: delete the four roles `fis-demo-experiment-role`, `fis-demo-codebuild-role`, `fis-demo-pipeline-role` and `fis-demo-task-execution-role`.
+7. S3: empty and delete the source bucket and the artifacts bucket (`fis-demo-source-<ACCOUNT_ID>-<REGION>` and `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`). The source bucket is versioned, so use `bash tools/empty-bucket.sh <bucket-name>` first.
+8. ECS: open **Task definitions** and choose `fis-demo-task`. Select all revisions and deregister them. Then select all revisions again and delete them. Do this after the service is deleted. A deleted revision stays in `DELETE_IN_PROGRESS` until every task and service that uses it has ended. The pipeline's Deploy stage registers new revisions, so there can be more than one.
+9. CloudWatch: open **Log groups** and delete `/aws/codebuild/fis-demo-failover-test`. CodeBuild creates it by itself on the first run. Also delete the log group that ECS created for the task, which should be `/ecs/fis-demo-task`. Check the real name in the list.
+10. EC2: delete the load balancer `fis-demo-alb`, then the target group `fis-demo-tg`, then the security groups `fis-demo-task-sg` and `fis-demo-alb-sg`.
 
 To do steps 9 and 10 from the command line, run `bash tools/cleanup-leftovers.sh`. It handles the known names above.
 
