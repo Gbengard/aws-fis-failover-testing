@@ -1,9 +1,3 @@
----
-title: Test failover in your CI/CD pipeline with AWS Fault Injection Service
-published: false
-tags: aws, devops, cicd, chaosengineering
----
-
 ## Introduction
 
 When a task in an ECS service stops, ECS starts a new one by itself. You do not have to do anything. The load balancer then sends traffic to the new task when it is healthy.
@@ -33,6 +27,10 @@ What this test proves: the service recovers from a lost task within a time limit
 ## Architecture
 
 ![Architecture diagram](./architecture/architecture.png)
+
+![Resource diagram](./architecture/resources-diagram.png)
+
+![pipeline diagram](./architecture/pipeline.png)
 
 - An S3 bucket holds `source.zip`. A change to this file starts the pipeline.
 - CodePipeline has three stages: Source, Deploy, FailoverTest.
@@ -561,7 +559,7 @@ Delete in this order:
 6. IAM: delete the four roles `fis-demo-experiment-role`, `fis-demo-codebuild-role`, `fis-demo-pipeline-role` and `fis-demo-task-execution-role`.
 7. S3: empty and delete the source bucket and the artifacts bucket (`fis-demo-source-<ACCOUNT_ID>-<REGION>` and `fis-demo-artifacts-<ACCOUNT_ID>-<REGION>`). The source bucket is versioned, so use `bash tools/empty-bucket.sh <bucket-name>` first.
 8. ECS: open **Task definitions** and choose `fis-demo-task`. Select all revisions and deregister them. Then select all revisions again and delete them. Do this after the service is deleted. A deleted revision stays in `DELETE_IN_PROGRESS` until every task and service that uses it has ended. The pipeline's Deploy stage registers new revisions, so there can be more than one.
-9. CloudWatch: open **Log groups** and delete `/aws/codebuild/fis-demo-failover-test`. CodeBuild creates it by itself on the first run. Also delete the log group that ECS created for the task, which should be `/ecs/fis-demo-task`. Check the real name in the list.
+9. CloudWatch: open **Log groups**, click on **Log Management** and delete `/aws/codebuild/fis-demo-failover-test`. CodeBuild creates it by itself on the first run. Also delete the log group that ECS created for the task, which should be `/ecs/fis-demo-task`. Check the real name in the list.
 10. EC2: delete the load balancer `fis-demo-alb`, then the target group `fis-demo-tg`, then the security groups `fis-demo-task-sg` and `fis-demo-alb-sg`.
 
 To do steps 9 and 10 from the command line, run `bash tools/cleanup-leftovers.sh`. It handles the known names above.
